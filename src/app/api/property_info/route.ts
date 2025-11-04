@@ -8,6 +8,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+// Simple in-memory rate-limiting: if this endpoint is hit more than once
+// within RATE_LIMIT_WINDOW_MS, the request will be rejected and the Zillow
+// scraping logic will not run. This is sufficient for a cron job that runs
+// every 15 minutes; it avoids accidental duplicate runs within a short window.
+let lastRequestAt = 0;
+const RATE_LIMIT_WINDOW_MS = 5_000; // 5 seconds
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -220,6 +227,22 @@ function parsePropertyInfo(html: string): PropertyInfo | null {
 }
 
 export async function GET() {
+  // Rate limit: if this endpoint was hit within the last RATE_LIMIT_WINDOW_MS
+  // milliseconds, skip performing any scraping or DB work and return 429.
+  const now = Date.now();
+  if (now - lastRequestAt < RATE_LIMIT_WINDOW_MS) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `Rate-limited call to /api/property_info (only one allowed per ${RATE_LIMIT_WINDOW_MS}ms)`
+    );
+    return NextResponse.json(
+      { error: "Rate limited. Try again later." },
+      { status: 429 }
+    );
+  }
+  // Accept this request and record the time immediately to prevent
+  // near-simultaneous duplicate execution.
+  lastRequestAt = now;
   // Goal: keep trying until we have a valid parsed property so the caller
   // always receives a successful JSON response. We still guard total time/attempts
   // to avoid infinite loops in case of persistent blocking.
