@@ -1,0 +1,10 @@
+san-francisco-ca
+los-angeles-ca
+chicago-il
+phoenix-az
+new-york-ny
+seattle-wa
+boston-ma
+miami-fl
+atlanta-ga
+portland-or
