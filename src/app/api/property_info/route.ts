@@ -10,7 +10,8 @@ export const revalidate = 0;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const CITIES_PATH = path.join(__dirname, "cities.txt");
+
+const CITIES_PATH = path.join(process.cwd(), "public", "cities.txt");
 
 const UA =
   "Mozilla/5.0 (Linux; Android 8.0.0; SM-G960F Build/R16NW) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.84 Mobile Safari/537.36";
@@ -33,11 +34,17 @@ type PropertyInfo = {
 };
 
 async function readCities(): Promise<string[]> {
-  const raw = await fs.readFile(CITIES_PATH, "utf8");
-  return raw
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  try {
+    const raw = await fs.readFile(CITIES_PATH, "utf8");
+    // eslint-disable-next-line no-console
+    console.debug(`Loaded cities from ${CITIES_PATH}`);
+    return raw
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  } catch (e) {
+    throw new Error(`cities list not found at ${CITIES_PATH}`);
+  }
 }
 
 async function fetchText(
