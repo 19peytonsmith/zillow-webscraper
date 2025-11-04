@@ -2,9 +2,9 @@
 
 This repository contains a Next.js serverless route that scrapes a random Zillow property and (optionally) persists structured JSON to MongoDB.
 
-It is used in conjunction with [ZillowGuessr](https://zillowguessr.com/)'s property-info fetching on it's backend.
+It is used in conjunction with [ZillowGuessr](https://zillowguessr.com/)'s property info fetching on it's backend.
 
-What this repo contains
+#### What this repo contains
 
 - `src/app/api/property_info/route.ts` server-side TypeScript route that fetches a random Zillow listing, parses images/price/beds/baths/address, and inserts the result into MongoDB when configured.
 - `src/lib/mongodb.ts` MongoDB connection helper used by the route.
