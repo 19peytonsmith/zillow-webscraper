@@ -43,6 +43,11 @@ export async function connectToDatabase(): Promise<DbResult> {
   // Ensure simple indexes to avoid duplicates and enable queries
   try {
     await listings.createIndex({ url: 1 });
+    // Ensure detailUrl is unique (sparse to allow older docs without the field)
+    await listings.createIndex(
+      { detailUrl: 1 },
+      { unique: true, sparse: true }
+    );
     await listings.createIndex({ scraped_at: -1 });
     await listings.createIndex({ city: 1, state: 1 });
   } catch (e) {

@@ -79,7 +79,12 @@ async function getValidDetailUrl(cities: string[]): Promise<string | null> {
   const MAX_ATTEMPTS = 8;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const city = pick(cities);
-    const cityUrl = `https://www.zillow.com/${city}/`;
+    // Append a random pagination suffix to increase randomness. Examples:
+    //  - https://www.zillow.com/seattle-wa/5_p/
+    //  - https://www.zillow.com/seattle-wa/1_p/
+    const page = Math.floor(Math.random() * 8) + 1; // 1..8
+    const cityUrl = `https://www.zillow.com/${city}/${page}_p/`;
+    // eslint-disable-next-line no-console
     const resp = await fetchText(cityUrl);
     if (!resp.ok || !resp.text) continue;
 
@@ -91,6 +96,7 @@ async function getValidDetailUrl(cities: string[]): Promise<string | null> {
     );
 
     if (matches.length) {
+      console.log(`Found ${matches.length} detail URLs on ${cityUrl}`);
       const url = pick(matches);
       return url;
     }
@@ -312,11 +318,25 @@ export async function GET() {
         continue;
       }
 
-      // Successful parse: attach the detailUrl and persist
+      // Successful parse: attach the detailUrl and persist if it's unique
       info.detailUrl = detailUrl;
 
       try {
         const { listings } = await connectToDatabase();
+
+        // Check for an existing record with the same detailUrl and skip if found
+        const existing = await listings.findOne({ detailUrl });
+        if (existing) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `Attempt ${attempt}: duplicate detailUrl found in DB, skipping: ${detailUrl}`
+          );
+          // keep lastParse for fallback behavior and continue trying
+          lastParse = { detailUrl, raw: undefined, duplicate: true };
+          await new Promise((r) => setTimeout(r, DELAY_MS));
+          continue;
+        }
+
         const now = new Date();
         const doc = {
           ...info,
@@ -329,7 +349,7 @@ export async function GET() {
       } catch (e) {
         // Log DB errors but still return the parsed result
         // eslint-disable-next-line no-console
-        console.error("Failed to persist to MongoDB:", e);
+        console.error("Failed to persist to MongoDB or check duplicates:", e);
       }
 
       return NextResponse.json(info, { status: 200 });
