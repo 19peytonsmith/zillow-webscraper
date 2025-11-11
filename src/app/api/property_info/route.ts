@@ -18,7 +18,9 @@ const RATE_LIMIT_WINDOW_MS = 5_000; // 5 seconds
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const CITIES_PATH = path.join(process.cwd(), "public", "cities.txt");
+// Default cities filename (we'll choose between US and Canada at runtime)
+const DEFAULT_CITIES_FILENAME = "cities.txt";
+const CANADIAN_CITIES_FILENAME = "canadian-cities.txt";
 
 const UA =
   "Mozilla/5.0 (Linux; Android 8.0.0; SM-G960F Build/R16NW) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.84 Mobile Safari/537.36";
@@ -40,17 +42,21 @@ type PropertyInfo = {
   detailUrl?: string;
 };
 
-async function readCities(): Promise<string[]> {
+async function readCities(canadian = false): Promise<string[]> {
+  const filename = canadian
+    ? CANADIAN_CITIES_FILENAME
+    : DEFAULT_CITIES_FILENAME;
+  const filePath = path.join(process.cwd(), "public", filename);
   try {
-    const raw = await fs.readFile(CITIES_PATH, "utf8");
+    const raw = await fs.readFile(filePath, "utf8");
     // eslint-disable-next-line no-console
-    console.debug(`Loaded cities from ${CITIES_PATH}`);
+    console.debug(`Loaded cities from ${filePath}`);
     return raw
       .split(/\r?\n/)
       .map((s) => s.trim())
       .filter(Boolean);
   } catch (e) {
-    throw new Error(`cities list not found at ${CITIES_PATH}`);
+    throw new Error(`cities list not found at ${filePath}`);
   }
 }
 
@@ -104,7 +110,10 @@ async function getValidDetailUrl(cities: string[]): Promise<string | null> {
   return null;
 }
 
-function parsePropertyInfo(html: string): PropertyInfo | null {
+function parsePropertyInfo(
+  html: string,
+  canadian = false
+): PropertyInfo | null {
   const imgPattern = /(https?:\/\/[^,\s]+_960\.jpg)/g;
   const urls = Array.from(
     new Set(Array.from(html.matchAll(imgPattern), (m) => m[1]))
@@ -122,8 +131,15 @@ function parsePropertyInfo(html: string): PropertyInfo | null {
   //    Example snippets we might see in the page text:
   //    "$375,000 4 bd 2 ba 2,139 sqft ... 4933 W Melody Ln, Laveen, AZ 85339"
   //    "$375,000 4 beds, 2 baths, 2,139 Square Feet ... located at 4933 W Melody Ln, Laveen, AZ 85339"
-  const combo =
-    /(?<value>\$\d{1,3}(?:,\d{3})*)(?:[^$]{0,120}?)(?<beds>\d+(?:\.\d+)?)\s*(?:bd|beds?)(?:[^$]{0,120}?)(?<baths>\d+(?:\.\d+)?)\s*(?:ba|baths?)(?:[^$]{0,160}?)(?<sqft>[\d,]+)\s*(?:sqft|Square\s*Feet)(?:[^$]{0,200}?)(?<address>\d{1,6}[\w\s\.\-#']+?),(?:\s*)(?<city>[A-Za-z\.\-'\s]+?),(?:\s*)(?<state>[A-Z]{2})\s+(?<zipcode>\d{5})/is;
+  // Build a combo regex that accepts either US ($) or Canadian (C$ or CAD) currencies
+  // and accepts either US ZIP codes (5 digits) or Canadian postal codes (A1A 1A1).
+  const currencyPart = canadian ? "(?:C\\$|CAD\\s*|\\$)" : "\\$";
+  const postalPart = canadian ? "[A-Za-z]d[A-Za-z][ -]?d[A-Za-z]d" : "\\d{5}";
+  const statePart = "[A-Z]{2}";
+  const combo = new RegExp(
+    `(?<value>${currencyPart}\d{1,3}(?:,\d{3})*)(?:[^$]{0,120}?)(?<beds>\d+(?:\.\d+)?)\\s*(?:bd|beds?)(?:[^$]{0,120}?)(?<baths>\d+(?:\.\d+)?)\\s*(?:ba|baths?)(?:[^$]{0,160}?)(?<sqft>[\d,]+)\\s*(?:sqft|Square\\s*Feet)(?:[^$]{0,200}?)(?<address>\\d{1,6}[\\w\\s\\.\\-#']+?),(?:\\s*)(?<city>[A-Za-z\\.\\-\\'\\s]+?),(?:\\s*)(?<state>${statePart})\\s+(?<zipcode>${postalPart})`,
+    "is"
+  );
 
   const m = html.match(combo);
 
@@ -147,8 +163,8 @@ function parsePropertyInfo(html: string): PropertyInfo | null {
     zipcode = m.groups["zipcode"];
   } else {
     // Fallback: parse fields independently
-    // Price like "$375,000"
-    valueStr = first(/\$(\d{1,3}(?:,\d{3})*)/i, html);
+    // Price like "$375,000" or "C$648,000" or "CAD 648,000"
+    valueStr = first(/(?:C\$|CAD\s*|\$)\s*(\d{1,3}(?:,\d{3})*)/i, html);
 
     // Beds "4 bd" or "4 beds"
     bedsStr = first(/(\d+(?:\.\d+)?)\s*(?:bd|beds?)/i, html);
@@ -164,15 +180,21 @@ function parsePropertyInfo(html: string): PropertyInfo | null {
     // Many Zillow titles look like: "4933 W Melody Ln, Laveen, AZ 85339 | MLS #..."
     const title = first(/<title>([^<]+)<\/title>/i, html);
     const titleAddress = title
-      ? first(/^(.+?),\s*[A-Za-z\.\-'\s]+,\s*[A-Z]{2}\s+\d{5}/, title)
+      ? first(
+          /^(.+?),\s*[A-Za-z\.\-\'\s]+,\s*[A-Z]{2}\s+(?:\d{5}|[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d)/,
+          title
+        )
       : null;
 
     const cityStateZip = first(
-      /([A-Za-z\.\-'\s]+),\s*([A-Z]{2})\s+(\d{5})/i,
+      /([A-Za-z\.\-\'\s]+),\s*([A-Z]{2})\s+(?:\d{5}|[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d)/i,
       html
     );
     if (cityStateZip) {
-      const parts = /([A-Za-z\.\-'\s]+),\s*([A-Z]{2})\s+(\d{5})/i.exec(html)!;
+      const parts =
+        /([A-Za-z\.\-\'\s]+),\s*([A-Z]{2})\s+(\d{5}|[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d)/i.exec(
+          html
+        )!;
       city = parts[1].trim();
       state = parts[2].trim();
       zipcode = parts[3].trim();
@@ -182,7 +204,7 @@ function parsePropertyInfo(html: string): PropertyInfo | null {
       address =
         titleAddress ??
         first(
-          /(\d{1,6}\s+[A-Za-z0-9\.\-#'\s]+)(?=,\s*[A-Za-z\.\-'\s]+,\s*[A-Z]{2}\s+\d{5})/,
+          /(\d{1,6}\s+[A-Za-z0-9\.\-#'\s]+)(?=,\s*[A-Za-z\.\-\'\s]+,\s*[A-Z]{2}\s+(?:\d{5}|[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d))/,
           html
         );
     }
@@ -190,9 +212,10 @@ function parsePropertyInfo(html: string): PropertyInfo | null {
     // Final fallback: if we still don't have an address but we do have a full "Address, City, ST ZIP" in <title>,
     // split it from the title directly.
     if ((!address || !city || !state || !zipcode) && title) {
-      const t = /(.+?),\s*([A-Za-z\.\-'\s]+),\s*([A-Z]{2})\s+(\d{5})/.exec(
-        title
-      );
+      const t =
+        /(.+?),\s*([A-Za-z\.\-\'\s]+),\s*([A-Z]{2})\s+(\d{5}|[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d)/.exec(
+          title
+        );
       if (t) {
         address = address ?? t[1].trim();
         city = city ?? t[2].trim();
@@ -216,7 +239,8 @@ function parsePropertyInfo(html: string): PropertyInfo | null {
     return null;
   }
 
-  const value = Number(valueStr.replace(/\$|,/g, ""));
+  // Normalize currency: remove leading $ or C$ or CAD and commas
+  const value = Number(valueStr.replace(/(?:C\$|CAD\s*|\$)|,/gi, ""));
   if (!Number.isFinite(value) || value > 20_000_000) return null;
 
   const city_state_zipcode = `${city}, ${state} ${zipcode}`;
@@ -232,7 +256,7 @@ function parsePropertyInfo(html: string): PropertyInfo | null {
   };
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   // Rate limit: if this endpoint was hit within the last RATE_LIMIT_WINDOW_MS
   // milliseconds, skip performing any scraping or DB work and return 429.
   const now = Date.now();
@@ -256,10 +280,18 @@ export async function GET() {
   const MAX_TOTAL_ATTEMPTS = 5;
   const DELAY_MS = 10_000; // 10 seconds
 
-  // Read cities up front
+  // Parse optional query param: ?canadian=true
+  const url = new URL(req.url);
+  const canadianParam = url.searchParams.get("canadian");
+  const canadian =
+    canadianParam === "1" ||
+    canadianParam === "true" ||
+    canadianParam === "yes";
+
+  // Read cities up front (US by default, Canadian when flag is set)
   let cities: string[];
   try {
-    cities = await readCities();
+    cities = await readCities(canadian);
     if (cities.length === 0) throw new Error("cities list is empty");
   } catch (e) {
     // Log the error but return a harmless successful JSON placeholder so callers
@@ -306,7 +338,7 @@ export async function GET() {
       }
 
       // 3) Parse details
-      const info = parsePropertyInfo(detailResp.text);
+      const info = parsePropertyInfo(detailResp.text, canadian);
       if (!info) {
         // Keep the last parse for fallback if needed
         lastParse = { detailUrl, raw: undefined };
@@ -322,14 +354,16 @@ export async function GET() {
       info.detailUrl = detailUrl;
 
       try {
-        const { listings } = await connectToDatabase();
+        const { db } = await connectToDatabase();
+        const collectionName = canadian ? "listings-canada" : "listings";
+        const coll = db.collection(collectionName);
 
         // Check for an existing record with the same detailUrl and skip if found
-        const existing = await listings.findOne({ detailUrl });
+        const existing = await coll.findOne({ detailUrl });
         if (existing) {
           // eslint-disable-next-line no-console
           console.warn(
-            `Attempt ${attempt}: duplicate detailUrl found in DB, skipping: ${detailUrl}`
+            `Attempt ${attempt}: duplicate detailUrl found in DB (${collectionName}), skipping: ${detailUrl}`
           );
           // keep lastParse for fallback behavior and continue trying
           lastParse = { detailUrl, raw: undefined, duplicate: true };
@@ -344,7 +378,7 @@ export async function GET() {
           scraped_at: now,
           version: "1.0",
         } as any;
-        const res = await listings.insertOne(doc as any);
+        const res = await coll.insertOne(doc as any);
         (info as any)._insertedId = res.insertedId?.toString?.();
       } catch (e) {
         // Log DB errors but still return the parsed result
