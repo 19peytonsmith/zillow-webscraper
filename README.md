@@ -2,7 +2,7 @@
 
 This repository contains a Next.js serverless route that scrapes a random Zillow property and (optionally) persists structured JSON to MongoDB.
 
-It is used in conjunction with [ZillowGuessr](https://zillowguessr.com/)'s property info fetching on it's backend.
+It is used in conjunction with [PropertyGuessr](https://propertyguessr.vercel.app/)'s property info fetching on it's backend.
 
 #### What this repo contains
 
